@@ -23,6 +23,7 @@ handpose_estimation_mediapipe_2023feb.onnx
 *map*
 odom*
 
-isaac_ros-devsrc/m-explore-ros2/
+isaac_ros-dev/
+src/m-explore-ros2/
 src/rf2o_laser_odometry/
 src/ydlidar_ros2_driver/
