@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>ROS2 Minimal Control</title>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin-top: 40px;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    #status { margin-bottom: 20px; }
+
+    button {
+      width: 90px;
+      height: 60px;
+      margin: 5px;
+      font-size: 16px;
+    }
+
+    .row { margin: 5px 0; }
+<!--
+    .video-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+
+      background-image: url("http://192.168.65.87:8081");
+      background-repeat: no-repeat;
+
+      background-size: 200% 100%;
+      background-position: left top;
+
+      z-index: -1;
+    }-->
+  </style>
+
+  <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/roslib.min.js"></script>
+</head>
+
+<body>
+
+<div class="video-bg"></div>
+
+<h2>ROS2 Minimal Control</h2>
+<div id="status">Подключение...</div>
+
+<div class="row">
+  <button onclick="sendCmd(0.6, 0)">Вперёд</button>
+</div>
+
+<div class="row">
+  <button onclick="sendCmd(0, 0.8)">Влево</button>
+  <button onclick="sendCmd(0, 0)">Стоп</button>
+  <button onclick="sendCmd(0, -0.8)">Вправо</button>
+</div>
+
+<div class="row">
+  <button onclick="sendCmd(-0.6, 0)">Назад</button>
+</div>
+
+<script>
+  const ROSBRIDGE_URL = 'ws://192.168.65.87:9090';
+  const CMD_VEL_TOPIC = '/cmd_vel';
+
+  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
+  const statusEl = document.getElementById('status');
+
+  ros.on('connection', () => {
+    statusEl.textContent = 'Подключено к ' + ROSBRIDGE_URL;
+    statusEl.style.color = 'green';
+  });
+
+  ros.on('error', (error) => {
+    statusEl.textContent = 'Ошибка подключения: ' + error;
+    statusEl.style.color = 'red';
+  });
+
+  ros.on('close', () => {
+    statusEl.textContent = 'Соединение закрыто';
+    statusEl.style.color = 'orange';
+  });
+
+  const cmdVel = new ROSLIB.Topic({
+    ros: ros,
+    name: CMD_VEL_TOPIC,
+    messageType: 'geometry_msgs/msg/Twist'
+  });
+
+  function sendCmd(linearX, angularZ) {
+    const twist = new ROSLIB.Message({
+      linear:  { x: linearX, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: angularZ }
+    });
+    cmdVel.publish(twist);
+  }
+</script>
+
+</body>
+</html>

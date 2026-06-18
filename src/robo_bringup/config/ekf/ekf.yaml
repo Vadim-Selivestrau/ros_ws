@@ -1,0 +1,54 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 20.0
+    sensor_timeout: 0.5
+    two_d_mode: true               
+    use_sensor_data_time: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom # Для локальной фильтрации (odom -> base_link). 
+                      # Если Isaac ROS будет строить глобальную карту, 
+                      # для глобального EKF здесь меняют на 'map'.
+    
+    publish_tf: true
+
+    # 1. КОЛЕСНАЯ ОДОМЕТРИЯ (Берем только скорости, чтобы избежать накопления ошибки проскальзывания)
+    odom0: /odom_fixed
+    odom0_config: [false, false, false,   
+                   false, false, false,   
+                   true,  true,  false,   # vx, vy (линейная скорость робота)
+                   false, false, true,    # vyaw (угловая скорость вращения колес)
+                   false, false, false]   
+    odom0_differential: false
+    odom0_relative: false
+
+    # 2. ЛИДАРНАЯ ОДОМЕТРИЯ (RF2O отлично считает плоскую скорость по лазеру)
+    odom1: /odom_rf2o
+    odom1_config: [false,  false,  false,   # x, y (абсолютная позиция на карте/сцене)
+                   false, false, false,    # yaw (куда точно смотрит робот)
+                   false, false, false,
+                   false, false, false,  
+                   false, false, false]          
+    odom1_differential: false
+    odom1_relative: false
+
+    # 3. ИСААК РОС - СКОРОСТИ ИЗ ОДОМЕТРИИ (cuVSLAM дает эталонную скорость по камере)
+    odom2: /vslam_fixer
+    odom2_config: [false, false, false,  
+                   false, false, false,  
+                   true, true,  false,   # vx, vy (визуальная линейная скорость)
+                   false, false, true,    # vyaw (визуальная угловая скорость)
+                   false, false, false]               
+    odom2_differential: false
+    odom2_relative: false
+
+    pose0: /visual_slam/tracking/vo_pose_covariance
+    pose0_config: [false,  false,  false,   # x, y (абсолютная позиция на карте/сцене)
+                   false, false, false,    # yaw (куда точно смотрит робот)
+                   false, false, false,
+                   false, false, false,  
+                   false, false, false]
+    pose0_differential: false              # ОБЯЗАТЕЛЬНО true, чтобы сгладить микро-прыжки SLAM при коррекции карты
+    pose0_relative: false              # ОБЯЗАТЕЛЬНО true, чтобы занулить стартовую позицию камеры при запуске

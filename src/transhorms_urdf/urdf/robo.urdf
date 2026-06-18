@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<robot name="my_tracked_robot">
+
+
+  <link name="base_footprint">      
+    <origin xyz="0 0 0" rpy="0 0 0"/> 
+  </link>
+
+
+
+  <link name="base_link">      
+    <origin xyz="0 0 0" rpy="0 0 0"/> 
+    <visual>
+      <geometry>
+        <box size="0.38 0.2 0.225"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Связь: base_footprint -> base_link -->
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  <!-- ВОТ ЗДЕСЬ ГРУ КАК НЕ МЕНЯЙ ТОЛКУ НЕТ -->
+    <origin xyz="0 0 0.105" rpy="0 0 0"/>
+  </joint>
+
+
+  <link name="laser_frame">
+    <visual>
+      <geometry>
+        <cylinder length="0.05" radius="0.03"/>
+      </geometry>
+      <material name="red">
+        <color rgba="1 0 0 1"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Связь: base_link -> laser_frame  -->
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+
+    <origin xyz="0.085 0 0.105" rpy="0 0 1.57"/>
+  </joint>
+
+  <!-- 1. Физический корпус камеры -->
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.1 0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.194 0.04 0.048" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 2. Оптический фрейм ЛЕВОЙ камеры (основной для SLAM) -->
+  <!-- У него Z смотрит ВПЕРЕД, X вправо, Y вниз -->
+  <link name="left_optical_frame"/>
+
+  <joint name="left_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="left_optical_frame"/>
+    <!-- Поворот из стандартного в оптический вид -->
+    <origin xyz="0 0.03 0" rpy="-1.5707 0 -1.5707"/>
+  </joint>
+
+  <!-- 3. Оптический фрейм ПРАВОЙ камеры -->
+  <link name="right_optical_frame"/>
+
+  <joint name="right_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="right_optical_frame"/>
+    <!-- Смещение вправо на 6 см (baseline) относительно левой линзы -->
+    <origin xyz="0 -0.03 0" rpy="-1.5707 0 -1.5707"/>
+  </joint>
+
+
+</robot>

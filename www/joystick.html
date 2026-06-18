@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ROS2 Gamepad Style Joystick Control</title>
+
+  <style>
+    * {
+      user-select: none;
+      touch-action: none; 
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #111;
+      color: #eee;
+    }
+
+    .video-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-image: url("http://192.168.65.148:8081");
+      background-repeat: no-repeat;
+      background-size: 200% 100%;
+      background-position: left top;
+      z-index: -2;
+      opacity: 0.85;
+    }
+
+    .overlay-dark {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.4);
+      z-index: -1;
+    }
+
+    .info-panel {
+      position: relative;
+      z-index: 10;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      border-radius: 30px;
+      display: inline-block;
+      margin-top: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    #status {
+      font-weight: bold;
+      font-size: 1.1rem;
+      margin: 0;
+      letter-spacing: 0.5px;
+    }
+
+    .speed-indicators {
+      display: flex;
+      justify-content: center;
+      gap: 30px;
+      margin-top: 10px;
+      font-size: 0.9rem;
+      font-family: monospace;
+    }
+
+    .speed-indicators span {
+      background: #1e1e2f;
+      padding: 5px 12px;
+      border-radius: 20px;
+      color: #0ff;
+      font-weight: bold;
+    }
+
+    .joystick-container {
+      position: relative;
+      z-index: 20;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-top: 30px;
+      margin-bottom: 30px;
+    }
+
+    canvas {
+      background: rgba(30,30,46,0.75);
+      backdrop-filter: blur(4px);
+      border-radius: 50%;
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.2), 0 10px 30px rgba(0,0,0,0.5);
+      touch-action: none;
+      cursor: grab;
+      transition: 0.05s linear;
+    }
+
+    canvas:active {
+      cursor: grabbing;
+    }
+
+    .instruction {
+      margin-top: 20px;
+      font-size: 14px;
+      opacity: 0.8;
+      background: rgba(0,0,0,0.5);
+      display: inline-block;
+      padding: 8px 18px;
+      border-radius: 40px;
+      backdrop-filter: blur(4px);
+    }
+
+    .emergency-btn {
+      position: relative;
+      z-index: 20;
+      background: #d32f2f;
+      border: none;
+      color: white;
+      font-weight: bold;
+      padding: 12px 24px;
+      border-radius: 60px;
+      margin-top: 20px;
+      font-size: 1.2rem;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: 0.1s linear;
+      font-family: inherit;
+    }
+
+    .emergency-btn:active {
+      background: #b71c1c;
+      transform: scale(0.96);
+    }
+
+    @media (max-width: 600px) {
+      canvas {
+        width: 220px;
+        height: 220px;
+      }
+      .info-panel {
+        font-size: 0.9rem;
+        padding: 8px 16px;
+      }
+    }
+  </style>
+
+  <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/roslib.min.js"></script>
+</head>
+<body>
+
+<div class="video-bg"></div>
+<div class="overlay-dark"></div>
+
+<div class="info-panel">
+  <div id="status">🔄 Подключение к ROS...</div>
+  <div class="speed-indicators">
+    <span>📈 Линейная: <span id="linearVal">0.00</span></span>
+    <span>🔄 Угловая: <span id="angularVal">0.00</span></span>
+  </div>
+</div>
+
+<div class="joystick-container">
+  <canvas id="joystickCanvas" width="260" height="260" style="width:260px; height:260px;"></canvas>
+</div>
+
+<div class="instruction">
+  🎮 Тяните стик в любую сторону | Отпустите — робот остановится
+</div>
+
+<button class="emergency-btn" id="emergencyStop">⏹️ АВАРИЙНАЯ ОСТАНОВКА</button>
+
+<script>
+  const ROSBRIDGE_URL = 'ws://192.168.65.148:9090';
+  const CMD_VEL_TOPIC = '/cmd_vel';
+
+  const MAX_LINEAR = 0.6;    // м/с
+  const MAX_ANGULAR = 0.8;   // рад/с
+
+  const canvas = document.getElementById('joystickCanvas');
+  const ctx = canvas.getContext('2d');
+  const statusDiv = document.getElementById('status');
+  const linearSpan = document.getElementById('linearVal');
+  const angularSpan = document.getElementById('angularVal');
+  const emergencyBtn = document.getElementById('emergencyStop');
+
+  let joystickActive = false;     // нажат ли стик?
+  let joystickX = 0;              // нормализованное значение X от -1 до 1
+  let joystickY = 0;              // нормализованное значение Y от -1 до 1 (вверх/вниз)
+  
+  let canvasSize = 260;
+  let centerX = canvasSize / 2;
+  let centerY = canvasSize / 2;
+  let stickRadius = 28;           // радиус "ручки" стика
+  let baseRadius = 100;           // радиус зоны перемещения (ограничитель)
+  
+  let currentLinear = 0;
+  let currentAngular = 0;
+  
+  const ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
+  
+  ros.on('connection', () => {
+    statusDiv.innerHTML = '✅ Подключено к ' + ROSBRIDGE_URL;
+    statusDiv.style.color = '#a5d6a7';
+  });
+  
+  ros.on('error', (error) => {
+    statusDiv.innerHTML = '❌ Ошибка: ' + error;
+    statusDiv.style.color = '#ffab91';
+    console.error('ROS error:', error);
+  });
+  
+  ros.on('close', () => {
+    statusDiv.innerHTML = '⚠️ Соединение закрыто';
+    statusDiv.style.color = '#ffcc80';
+  });
+  
+  const cmdVelTopic = new ROSLIB.Topic({
+    ros: ros,
+    name: CMD_VEL_TOPIC,
+    messageType: 'geometry_msgs/msg/Twist'
+  });
+  
+  function sendVelocity(linearX, angularZ) {
+    linearX = Math.min(MAX_LINEAR, Math.max(-MAX_LINEAR, linearX));
+    angularZ = Math.min(MAX_ANGULAR, Math.max(-MAX_ANGULAR, angularZ));
+    
+    const twist = new ROSLIB.Message({
+      linear:  { x: linearX, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: angularZ }
+    });
+    cmdVelTopic.publish(twist);
+    
+    currentLinear = linearX;
+    currentAngular = angularZ;
+    linearSpan.textContent = currentLinear.toFixed(2);
+    angularSpan.textContent = currentAngular.toFixed(2);
+  }
+  
+  function stopRobot() {
+    joystickX = 0;
+    joystickY = 0;
+    sendVelocity(0, 0);
+    drawJoystick(); // перерисовываем стик в центре
+  }
+  
+  function updateVelocityFromStick() {
+    let linear = -joystickY;   // вперёд/назад (т.к. Y вверх = отрицательный в canvas, даёт положительную линейную)
+    let angular = -joystickX;  // поворот: влево = положительный угловой, вправо отрицательный
+    
+    linear = linear * MAX_LINEAR;
+    angular = angular * MAX_ANGULAR;
+    
+    sendVelocity(linear, angular);
+  }
+  
+  function drawJoystick() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvasSize, canvasSize);
+    
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, baseRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(20, 25, 45, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.moveTo(centerX - baseRadius, centerY);
+    ctx.lineTo(centerX + baseRadius, centerY);
+    ctx.moveTo(centerX, centerY - baseRadius);
+    ctx.lineTo(centerX, centerY + baseRadius);
+    ctx.strokeStyle = 'rgba(200, 200, 255, 0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, baseRadius - 5, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    let stickX = centerX + (joystickX * baseRadius);
+    let stickY = centerY + (joystickY * baseRadius);
+    
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    const grad = ctx.createRadialGradient(stickX-6, stickY-6, 5, stickX, stickY, stickRadius);
+    grad.addColorStop(0, '#5a7d9a');
+    grad.addColorStop(1, '#2c4c6c');
+    ctx.beginPath();
+    ctx.arc(stickX, stickY, stickRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = '#ffffffcc';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(stickX-5, stickY-5, 6, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(255,255,245,0.3)';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(255,240,150,0.9)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffd966';
+    ctx.fill();
+  }
+  
+  function getNormalizedCoordinates(eventX, eventY) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;   // canvas физический размер 260, а rect может быть масштабирован
+    const scaleY = canvas.height / rect.height;
+    
+    let canvasX = (eventX - rect.left) * scaleX;
+    let canvasY = (eventY - rect.top) * scaleY;
+    
+    canvasX = Math.min(canvasSize, Math.max(0, canvasX));
+    canvasY = Math.min(canvasSize, Math.max(0, canvasY));
+    
+    let dx = canvasX - centerX;
+    let dy = canvasY - centerY;
+    
+    let distance = Math.hypot(dx, dy);
+    let maxRadius = baseRadius;
+    
+    let normX = 0, normY = 0;
+    if (distance > maxRadius) {
+      normX = (dx / distance) * (maxRadius / maxRadius); // = dx/distance, просто единичный вектор
+      normY = (dy / distance);
+      normX = normX;
+      normY = normY;
+    } else {
+      normX = dx / maxRadius;
+      normY = dy / maxRadius;
+    }
+    
+    return { x: Math.min(1.0, Math.max(-1.0, normX)), y: Math.min(1.0, Math.max(-1.0, normY)) };
+  }
+  
+  function handleJoystickStart(e) {
+    e.preventDefault();
+    joystickActive = true;
+    const point = getEventPoint(e);
+    if (point) {
+      const { x, y } = getNormalizedCoordinates(point.clientX, point.clientY);
+      joystickX = x;
+      joystickY = y;
+      updateVelocityFromStick();
+      drawJoystick();
+    }
+  }
+  
+  function handleJoystickMove(e) {
+    if (!joystickActive) return;
+    e.preventDefault();
+    const point = getEventPoint(e);
+    if (point) {
+      const { x, y } = getNormalizedCoordinates(point.clientX, point.clientY);
+      joystickX = x;
+      joystickY = y;
+      updateVelocityFromStick();
+      drawJoystick();
+    }
+  }
+  
+  function handleJoystickEnd(e) {
+    if (!joystickActive) return;
+    e.preventDefault();
+    joystickActive = false;
+    // Сброс стика в центр
+    joystickX = 0;
+    joystickY = 0;
+    stopRobot();   // отправка нулей и обновление UI
+    drawJoystick();
+  }
+  
+  function getEventPoint(e) {
+    if (e.touches) {
+      if (e.touches.length === 0) return null;
+      return e.touches[0];
+    }
+    return e;
+  }
+  
+  function attachJoystickEvents() {
+    // Мышь
+    canvas.addEventListener('mousedown', handleJoystickStart);
+    window.addEventListener('mousemove', handleJoystickMove);
+    window.addEventListener('mouseup', handleJoystickEnd);
+    
+    canvas.addEventListener('touchstart', handleJoystickStart, { passive: false });
+    window.addEventListener('touchmove', handleJoystickMove, { passive: false });
+    window.addEventListener('touchend', handleJoystickEnd);
+    window.addEventListener('touchcancel', handleJoystickEnd);
+    
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  
+  emergencyBtn.addEventListener('click', () => {
+    joystickActive = false;
+    joystickX = 0;
+    joystickY = 0;
+    stopRobot();
+    drawJoystick();
+    emergencyBtn.style.transform = 'scale(0.96)';
+    setTimeout(() => { emergencyBtn.style.transform = ''; }, 150);
+  });
+  
+  function initJoystick() {
+    attachJoystickEvents();
+    drawJoystick();
+  }
+  
+  function setCanvasDimensions() {
+    // Принудительно размер canvas в пикселях (чтобы не размывался)
+    canvas.width = canvasSize;
+    canvas.height = canvasSize;
+    canvas.style.width = `${canvasSize}px`;
+    canvas.style.height = `${canvasSize}px`;
+    centerX = canvasSize / 2;
+    centerY = canvasSize / 2;
+    baseRadius = Math.min(100, canvasSize * 0.42); // адаптивно
+    stickRadius = Math.max(22, canvasSize * 0.1);
+    drawJoystick();
+  }
+  
+  // Инициализация при загрузке
+  window.addEventListener('load', () => {
+    setCanvasDimensions();
+    initJoystick();
+    // Отправляем нулевую скорость при старте для безопасности
+    setTimeout(() => {
+      sendVelocity(0, 0);
+    }, 200);
+  });
+  
+  // Если окно изменяет размеры (но canvas фикс, пересчёт пропорций)
+  window.addEventListener('resize', () => {
+    setCanvasDimensions();
+    drawJoystick();
+  });
+</script>
+
+</body>
+</html>
