@@ -131,7 +131,7 @@ def generate_launch_description():
         # IncludeLaunchDescription(PythonLaunchDescriptionSource(slam_launch)),
         IncludeLaunchDescription(XMLLaunchDescriptionSource(rosbridge_launch)),
         http_server_cmd,
-        # map_server_cmd,
         # nav2_bringup_cmd,
-        # global_localizator_node,
+        # map_server_cmd,
+        global_localizator_node,
     ])

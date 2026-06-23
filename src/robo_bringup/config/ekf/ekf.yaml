@@ -38,8 +38,8 @@ ekf_filter_node:
     odom2: /vslam_fixer
     odom2_config: [false, false, false,  
                    false, false, false,  
-                   true, true,  false,   # vx, vy (визуальная линейная скорость)
-                   false, false, true,    # vyaw (визуальная угловая скорость)
+                   false, false,  false,   # vx, vy (визуальная линейная скорость)
+                   false, false, false,    # vyaw (визуальная угловая скорость)
                    false, false, false]               
     odom2_differential: false
     odom2_relative: false
