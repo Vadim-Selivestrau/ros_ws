@@ -6,16 +6,12 @@ Requires=local-fs.target
 [Service]
 User=jetson
 ExecStartPre=/bin/rm -f /home/jetson/ros2_ws/launch_logs/ros_launch.log
-ExecStartPre=/bin/bash -c 'docker stop $(docker ps -q) 2>/dev/null || echo "нет запущенных докер контейнеров"';
-ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash; cd /home/jetson/ros2_ws; source install/setup.bash; ros2 launch walle_camera camera.launch.py camera_ns=camera;'
+ExecStartPre=/bin/bash -c 'docker stop $(docker ps -q) 2>/dev/null || true';
 ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash; cd /home/jetson/ros2_ws; source install/setup.bash; ros2 launch robo_bringup robo.launch.py;'
-ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && ros2 launch nav2_bringup bringup_launch.py   use_sim_time:=False   map:=/home/jetson/ros2_ws/ofice_map/map_1781274690.yaml   params_file:=/home/jetson/ros2_ws/src/robo_bringup/config/nav2/nav2_params.yaml   slam:=False'
-ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && ros2 service call /reinitialize_global_localization std_srvs/srv/Empty {}'
-ExecStart=/bin/bash -c ''
 Restart=on-failure
 RestartSec=6
 StandardOutput=file:/home/jetson/ros2_ws/launch_logs/ros_launch.log
-StandardError=file:/home/jetson/ros2_ws/launch_logs/ros_launch_error.log
+StandardError=file:/home/jetson/ros2_ws/launch_logs/ros_launch.log
 
 
 [Install]

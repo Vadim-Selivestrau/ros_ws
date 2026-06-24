@@ -89,10 +89,6 @@ def generate_launch_description():
     )
 
 
-
-
-
-    # Запуск сервера карт
     map_server_cmd = Node(
         package='nav2_map_server',
         executable='map_server',
@@ -102,7 +98,7 @@ def generate_launch_description():
                     {'use_sim_time': False}]
     )
 
-    # Запуск навигационного стека
+
     nav2_bringup_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('nav2_bringup'), 'launch', 'bringup_launch.py'
@@ -131,7 +127,6 @@ def generate_launch_description():
         # IncludeLaunchDescription(PythonLaunchDescriptionSource(slam_launch)),
         IncludeLaunchDescription(XMLLaunchDescriptionSource(rosbridge_launch)),
         http_server_cmd,
-        # nav2_bringup_cmd,
-        # map_server_cmd,
-        global_localizator_node,
+        
+        # global_localizator_node,
     ])
