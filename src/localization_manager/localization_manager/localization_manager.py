@@ -10,6 +10,9 @@ from rcl_interfaces.msg import Parameter, ParameterType
 import subprocess
 import os
 from ament_index_python.packages import get_package_share_directory
+from slam_toolbox.srv import SaveMap
+from std_msgs.msg import String, Bool
+import time
 
 class LocalizationManager(Node):
     def __init__(self):
@@ -17,7 +20,10 @@ class LocalizationManager(Node):
         
 
         self.declare_parameter('amcl_threshold', 0.4)
-        
+        self.declare_parameter('exploration_timeout', 300)
+        self.exploration_timeout = self.get_parameter('exploration_timeout').value
+
+        self.exploration_start_time = None
         self.create_timer(0.5, self.check_state)
         self.state = 'INIT' # MAPPING LOCALIZATION LOCALIZED
         self.cov_sum = float('inf')
@@ -27,6 +33,8 @@ class LocalizationManager(Node):
         self.cli = self.create_client(Empty, '/reinitialize_global_localization')
         self.spin_timer = self.create_timer(0.1, self.spin_timer_callback)
 
+        self.frontiers_count = -1
+        self.exploration_finished = False
 
         self.set_param_client = self.create_client(SetParameters, '/amcl/set_parameters')
 
@@ -49,9 +57,41 @@ class LocalizationManager(Node):
             '/cmd_vel',
             10
         )
+        self.explore_toggle_pub = self.create_publisher(
+            Bool, 
+            '/explore/resume', 
+            10
+        )
+        
+        self.nav2_process = None
+        self.nav2_map_path = "/home/jetson/ros2_ws/ofice_map/map_1781274690.yaml"  # стартовая карта
+        self.start_nav2(self.nav2_map_path)
+
+    def start_nav2(self, map_path):
+        if self.nav2_process is not None and self.nav2_process.poll() is None:
+            self.get_logger().warn('nav2 already running')
+            return 
+
+        self.nav2_process = subprocess.Popen(
+            ['ros2', 'launch', 'nav2_bringup', 'bringup_launch.py', 'use_sim_time:=False',   f"map:={map_path}",   'params_file:=/home/jetson/ros2_ws/my_nav2_params.yaml',   'slam:=False'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        self.get_logger().info('nav2 mapping process started')
+
+
+    def stop_nav2(self):
+        if self.nav2_process is not None  and self.nav2_process.poll() is None:
+            self.nav2_process.terminate()
+            try:
+                self.nav2_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.nav2_process.kill()
+                self.nav2_process.wait()
+
+            self.get_logger().info('nav2 тоже стопнули')
 
     def check_state(self):
-        # pdb.set_trace()
         self.get_logger().info(f'мы в чек стейте со стейтом {self.state}')
 
         if self.state == 'INIT':
@@ -64,7 +104,6 @@ class LocalizationManager(Node):
             if now - self.start_time > self.timeout:
                 self.get_logger().info('мы в маппинге')
                 self.stop_rotation()
-                self.state = 'MAPPING'
                 self.mapping()
             elif self.cov_sum < self.amcl_threshold:
                 self.get_logger().info('мы локализованЫЫЫ')
@@ -73,6 +112,14 @@ class LocalizationManager(Node):
                 self.localization()
             else:
                 self.get_logger().info('хммм')
+        elif self.state == 'MAPPING':
+            now = self.get_clock().now().seconds_nanoseconds()[0]
+            self.get_logger().info('мы ваще жесть в маппинге')
+            if self.frontiers_count == 0 or now - self.exploration_start_time > self.exploration_timeout:
+                self.finish_mapping()
+        elif self.state == 'LOCALIZED':
+            self.localization()
+
 
     def spin_timer_callback(self):
         if self.state == 'LOCALIZATION':
@@ -96,9 +143,7 @@ class LocalizationManager(Node):
         self.get_logger().info('мы локализуемся')
         self.start_time = self.get_clock().now().seconds_nanoseconds()[0]
 
-        req = Empty.Request()
-        self.future = self.cli.call_async(req)
-        self.get_logger().info('Called /global_localization')
+        self.global_reinitialize()
 
         twist = Twist()
         twist.angular.z = 0.66
@@ -125,27 +170,34 @@ class LocalizationManager(Node):
         self.get_logger().info('SlamToolbox mapping process started')
 
     def mapping(self):
+        self.state = 'MAPPING'
         self.set_amcl_tf_broadcast(False)
+
 
         self.start_slam_mapping()
         self.start_explore()
-        if self.count == 0:
+        self.exploration_start_time = self.get_clock().now().seconds_nanoseconds()[0]
+
+        if self.frontiers_count == 0:
             self.get_logger().info('эксплоринг закончен')
         # self.state = 'MAPPING'
 
     def frontiers_callback(self, msg):
-        self.count = 0
+        """считает количество доступных для исследования фронтиров В ДАННЫЙ МОМЕНТ"""
+        self.frontiers_count = 0
         for marker in msg.markers:
             if marker.type == 2 and marker.color.g == 1.0:
-                count += 1
-        self.get_logger().info(f'Frontier centers: {count}')
+                self.frontiers_count += 1
+        self.get_logger().info(f'Frontier centers: {self.frontiers_count}')
 
 
     def amcl_callback(self, msg):
+        """возвращает сумму коваряций по оси Х Y YAW"""
         self.cov_sum = msg.pose.covariance[0] + msg.pose.covariance[7] + msg.pose.covariance[35] # x, y, yaw
         
 
     def set_amcl_tf_broadcast(self, enable: bool):
+        """меняет значение на публикацию трансформа map-odom у amcl"""
         if not self.set_param_client.service_is_ready():
             self.get_logger().warn('set_parameters service not ready')
             return
@@ -161,6 +213,7 @@ class LocalizationManager(Node):
         )
 
     def start_explore(self):
+        """запуск эксплоринг ноды"""
         if hasattr(self, 'explore_process') and self.explore_process.poll() is None:
             self.get_logger().warn('Explore already running')
             return
@@ -174,6 +227,72 @@ class LocalizationManager(Node):
             stderr=subprocess.PIPE
         )   
         self.get_logger().info('Explore lite started')
+
+    def global_reinitialize(self):
+        """ручками вызывает reinitialize global localization в амсл методе"""
+        req = Empty.Request()
+        self.future = self.cli.call_async(req)
+        self.get_logger().info('Called /global_localization')
+
+
+    def save_map(self):
+        self.get_logger().info('Сохраняем карту...')
+        
+        # 1. Создаём клиент сервиса
+        client = self.create_client(SaveMap, '/slam_toolbox/save_map')
+        
+        # 2. Ждём сервис (неблокирующе с таймаутом)
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error('Сервис /slam_toolbox/save_map недоступен!')
+            return
+        
+        # 3. Формируем запрос
+        request = SaveMap.Request()
+        request.name.data = '/home/jetson/ros2_ws/maps/current_map'
+        
+        # 4. Асинхронный вызов
+        future = client.call_async(request)
+        
+        # 5. Колбэк для обработки ответа
+        def callback(fut):
+            try:
+                fut.result()
+                self.get_logger().info('Карта успешно сохранена!')
+            except Exception as e:
+                self.get_logger().error(f'Ошибка при сохранении карты: {e}')
+        
+        future.add_done_callback(callback)
+
+
+
+    def finish_mapping(self):
+        """метод вызывающий для перехода из маппинга в локализацию. 
+        Останавливает эксплоринг, слэм, сохраняет карту, включает трансформ у амсл"""
+        self.exploration_start_time = None
+        self.save_map()
+
+        if hasattr(self, 'explore_process') and self.explore_process.poll() is None:
+            self.explore_process.terminate()
+            msg = Bool()
+            msg.data = False # False ставит исследование на паузу
+            self.explore_toggle_pub.publish(msg)
+
+            self.get_logger().info('стопнули эксплоринг?')
+        # pdb.set_trace()
+
+        
+        if hasattr(self, 'slam_process') and self.slam_process.poll() is None:
+            self.slam_process.terminate()
+            self.get_logger().info('слэм тоже стопнули')
+
+        
+        
+        self.set_amcl_tf_broadcast(True)
+        
+        self.state = "LOCALIZED"
+        self.stop_nav2()
+        self.start_nav2("/home/jetson/ros2_ws/maps/current_map.yaml")
+        self.global_reinitialize()
 
 def main(args=None):
     rclpy.init(args=args)
